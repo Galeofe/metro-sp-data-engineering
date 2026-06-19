@@ -1,0 +1,20 @@
+{
+  "bronze": {
+    "status": "error",
+    "last_run": "2026-06-19T16:26:22.866174",
+    "duration": 43.1,
+    "message": "An error occurred while executing the following cell:\n------------------\n# ─── GPS Ônibus — PII e Coordenadas ───────────────────────────────────────────\nif 'GPS Ônibus' in dfs:\n    df_gps = dfs['GPS Ônibus']\n\n    fig, axes = plt.subplots(1, 2, figsize=(12, 4), facecolor='#070b14')\n    fig.suptitle('GPS Ônibus — Problemas Bronze', color=CYAN, fontweight='bold')\n\n    # Coordenadas 0,0 (bug de fora de serviço)\n    coord_zero = ((df_gps['lat'] == 0) & (df_gps['lon'] == 0)).sum()\n    coord_ok   = len(df_gps) - coord_zero\n    axes[0].bar(['Coordenadas válidas', 'Coord (0,0) — bug'], [coord_ok, coor"
+  },
+  "silver": {
+    "status": "error",
+    "last_run": "2026-06-19T16:26:35.145004",
+    "duration": 12.3,
+    "message": "An error occurred while executing the following cell:\n------------------\n# ─── Qualidade do Ar: Antes × Depois ─────────────────────────────────────────\nfig, axes = plt.subplots(2, 3, figsize=(16, 8), facecolor='#070b14')\nfig.suptitle('Qualidade do Ar — Bronze vs Silver', color=CYAN, fontweight='bold', fontsize=14)\n\npoluentes = ['mp10', 'mp25', 'o3', 'no2', 'co', 'so2']\nfor ax, pol in zip(axes.flat, poluentes):\n    # Bronze: tenta converter (chega como string/object)\n    b_vals = pd.to_numeric(br_ar[pol].replace('', np.nan), errors='coerce').dropna()\n    s_vals = sv_ar[pol].dropna()\n\n    ax.hi"
+  },
+  "gold": {
+    "status": "error",
+    "last_run": "2026-06-19T16:26:48.180982",
+    "duration": 13.0,
+    "message": "An error occurred while executing the following cell:\n------------------\n# ─── DBSCAN — Análise dos Clusters de Risco ──────────────────────────────────\nfig, axes = plt.subplots(1, 2, figsize=(14, 6), facecolor='#070b14')\nfig.suptitle('DBSCAN — Mapa de Risco Urbano', color=CYAN, fontweight='bold')\n\nCLR = {'INFRAESTRUTURA': CYAN, 'MEIO_AMBIENTE': GREEN,\n       'MOBILIDADE': ORANGE, 'SEGURANCA': PINK, 'OUTROS': '#607090'}\n\ndf_geo = g_occ.dropna(subset=['lat','lon'])\nnoise  = df_geo[df_geo.cluster_id == -1]\nclust  = df_geo[df_geo.cluster_id >= 0]\n\n# Mapa geo\nfor cat, grp in clust.groupby('categor"
+  }
+}

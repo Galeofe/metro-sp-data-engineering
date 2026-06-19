@@ -1,0 +1,39 @@
+# Dados gerados pelo pipeline (regenerados a cada execução)
+data/**/*.parquet
+data/**/part-*.parquet
+
+# Logs de execução
+logs/*.log
+logs/*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_ckpt
+
+# Claude Code
+.claude/
+
+# Ambientes virtuais
+.venv/
+venv/
+env/
+.env
+
+# VS Code (manter configurações de launch)
+.vscode/settings.json
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini

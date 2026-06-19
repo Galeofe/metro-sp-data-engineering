@@ -1,0 +1,200 @@
+###############################################################################
+#  Metrópole SP — Data Platform
+#  Stack de produção com Kafka, MinIO e Dashboard Streamlit
+#
+#  Subir tudo:     docker compose up -d
+#  Ver logs:       docker compose logs -f
+#  Derrubar tudo:  docker compose down -v
+###############################################################################
+
+version: "3.9"
+
+networks:
+  metropolesp:
+    driver: bridge
+
+volumes:
+  minio_data:
+  zookeeper_data:
+  kafka_data:
+
+# ── Variáveis comuns ──────────────────────────────────────────────────────────
+x-minio-env: &minio-env
+  MINIO_ENDPOINT:   minio:9000
+  MINIO_ACCESS_KEY: metropolesp
+  MINIO_SECRET_KEY: metropolesp2026
+  MINIO_BUCKET:     data-lake
+
+services:
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # ZOOKEEPER — coordenação do cluster Kafka
+  # ──────────────────────────────────────────────────────────────────────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    container_name: metropolesp-zookeeper
+    hostname: zookeeper
+    networks: [metropolesp]
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME:   2000
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo ruok | nc localhost 2181"]
+      interval: 10s
+      timeout:   5s
+      retries:   5
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # KAFKA — broker de mensagens para ingestão em streaming
+  # Tópicos: iot-traffic, air-quality, gps-bus, ouvidoria, weather
+  # ──────────────────────────────────────────────────────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: metropolesp-kafka
+    hostname: kafka
+    networks: [metropolesp]
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    ports:
+      - "9092:9092"   # acesso externo (host)
+    environment:
+      KAFKA_BROKER_ID:                        1
+      KAFKA_ZOOKEEPER_CONNECT:                zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS:             PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP:   PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME:       PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE:        "true"
+      KAFKA_LOG_RETENTION_HOURS:              48
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 15s
+      timeout:   10s
+      retries:   5
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # KAFKA UI — painel web para visualizar tópicos e mensagens
+  # Acesso: http://localhost:8080
+  # ──────────────────────────────────────────────────────────────────────────
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: metropolesp-kafka-ui
+    networks: [metropolesp]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME:            metropolesp
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # MINIO — armazenamento de objetos S3-compatível (Data Lake)
+  # Console: http://localhost:9001  (metropolesp / metropolesp2026)
+  # Buckets criados: data-lake/bronze/ silver/ gold/ reports/
+  # ──────────────────────────────────────────────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    container_name: metropolesp-minio
+    hostname: minio
+    networks: [metropolesp]
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Console web
+    environment:
+      MINIO_ROOT_USER:     metropolesp
+      MINIO_ROOT_PASSWORD: metropolesp2026
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout:   5s
+      retries:   5
+
+  # ── MinIO: cria bucket e estrutura de pastas automaticamente ───────────────
+  minio-init:
+    image: minio/mc:latest
+    container_name: metropolesp-minio-init
+    networks: [metropolesp]
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: |
+      /bin/sh -c "
+        mc alias set local http://minio:9000 metropolesp metropolesp2026
+        mc mb --ignore-existing local/data-lake
+        mc mb --ignore-existing local/data-lake/bronze
+        mc mb --ignore-existing local/data-lake/silver
+        mc mb --ignore-existing local/data-lake/gold
+        mc mb --ignore-existing local/data-lake/reports
+        echo 'MinIO inicializado — bucket data-lake criado'
+      "
+    restart: "no"
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # PIPELINE — executa o pipeline completo (Bronze → Silver → Gold → Modelos)
+  # Roda uma vez e sai; os dados ficam disponíveis no volume shared
+  # ──────────────────────────────────────────────────────────────────────────
+  pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: metropolesp-app:latest
+    container_name: metropolesp-pipeline
+    networks: [metropolesp]
+    depends_on:
+      kafka:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+    environment:
+      <<: *minio-env
+      PYTHONIOENCODING: utf-8
+    command: python main.py
+    restart: "no"
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # DASHBOARD — Streamlit serve os resultados do pipeline no browser
+  # Acesso: http://localhost:8501
+  # ──────────────────────────────────────────────────────────────────────────
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: metropolesp-app:latest
+    container_name: metropolesp-dashboard
+    networks: [metropolesp]
+    depends_on:
+      - pipeline
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+    ports:
+      - "8501:8501"
+    environment:
+      <<: *minio-env
+      PYTHONIOENCODING: utf-8
+    command: >
+      streamlit run app.py
+      --server.port=8501
+      --server.address=0.0.0.0
+      --server.headless=true
+      --browser.gatherUsageStats=false
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')"]
+      interval: 20s
+      timeout:  10s
+      retries:  5
+    restart: unless-stopped
