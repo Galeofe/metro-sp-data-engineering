@@ -160,8 +160,10 @@ def main():
         validate_silver_ouvidoria(df_ouvidoria_s),
     ]
     for r in resultados_qualidade:
-        score = r.get("score", 0)
-        nome  = r.get("tabela", "?")
+        total_checks = len(r.checks)
+        ok_checks    = sum(1 for c in r.checks if c["ok"])
+        score        = ok_checks / total_checks if total_checks else 0
+        nome         = r.fonte
         _plog(f"  {nome:<25} score={score:.1%}")
     print_report(resultados_qualidade)
 
